@@ -1,0 +1,7 @@
+python==3.10
+llama_index==0.10.20
+openai
+nltk
+tqdm
+nest_asyncio
+pymupdf
