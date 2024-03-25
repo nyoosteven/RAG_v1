@@ -27,10 +27,10 @@ if "messages" not in st.session_state.keys():  # Initialize the chat messages hi
 def load_data():
     with st.spinner(text="Loading and indexing the Streamlit docs – hang tight! This should take 1-2 minutes."):
         multiDocumentEngine = MultiDocumentQueryEngine()
-        multiDocumentEngine.build_query_engine(html_folder= 'data/pdf',
-                                       nodes_folder = 'data/nodes',
-                                       summary_folder = 'data/summary')
-        top_agent_query_engine = multiDocumentEngine.multi_documents_query_engine()
+        top_agent_query_engine = multiDocumentEngine.build_query_engine(html_folder= 'data/pdf',
+                                                                        nodes_folder = 'data/nodes',
+                                                                        summary_folder = 'data/summary',
+                                                                        model_path = 'model/cache_qe',)
         return top_agent_query_engine
 
 top_agent = load_data()

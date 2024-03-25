@@ -21,7 +21,7 @@ from llama_index.core.tools import ToolMetadata, QueryEngineTool
 from llama_index.core.objects import ObjectIndex, SimpleToolNodeMapping
 from llama_index.agent.openai_legacy import OpenAIAgent, FnRetrieverOpenAIAgent
 from llama_index.core import SimpleKeywordTableIndex
-from build_vector_db import PymuPDF
+from build_vector_db import build_vector_db
 
 nest_asyncio.apply()
 llama_debug = LlamaDebugHandler(print_trace_on_end=True)
@@ -43,12 +43,7 @@ service_context = ServiceContext.from_defaults(num_output=num_output,
 
 set_global_service_context(service_context)
 
-prompt_type = {
-    'prospektus':"This is the prospectus document {file_name} that investors must carefully review, comprehend, and contemplate before making investments in mutual funds. A prospectus serves as a valuable tool for investors to identify the Fund Manager and the mutual funds that will serve as their investment targets.",
-    'fundsheet':"This is the fundsheets document {file_name} that issued monthly by the Fund Managers. It furnishes details regarding product performance, asset composition, and the securities portfolio at the end of each month for each mutual fund."
-}
-
-deskripsi = "This content contains about prospectus and fund sheet about {document}. Use this tool if you want to answer any questions about {document}.\n"
+prompt="Useful for retrieving about document {file_name}"
 
 class MultiDocumentQueryEngine():
 
@@ -56,19 +51,12 @@ class MultiDocumentQueryEngine():
         self.agents_dict = {}
         self.query_engine = {}
         self.prod_qe = []
-        self.pymupdf = PymuPDF()
+        self.pymupdf = build_vector_db()
         self.all_nodes = []
 
     def build_document_qe(self, pdf_folder, nodes_folder, summary_folder, file):
         
         file_name = str(file.split('.pdf')[0]).lower()
-
-        if file_name.endswith('prospektus'):
-            name = file_name.split('_prospektus')[0]
-            tipe = 'prospektus'
-        else:
-            name = file_name.split('_fundsheet')[0]
-            tipe = 'fundsheet'
         
         pdf_path = f'{pdf_folder}/{file_name}.pdf'
         nodes_path = f'{nodes_folder}/{file_name}.pkl'
@@ -77,58 +65,53 @@ class MultiDocumentQueryEngine():
         base_nodes, summary = self.pymupdf.get_nodes_from_documents(pdf_path, file_name, nodes_path, summary_path)
         self.all_nodes.extend(base_nodes)
 
-        prompt = prompt_type[tipe].format(file_name=name)
-
         retriever = VectorStoreIndex(base_nodes).as_retriever(similarity_top_k=5)
         query_engine = RetrieverQueryEngine.from_args(retriever)
 
         qe_tool = QueryEngineTool(
                         query_engine = query_engine,
                         metadata = ToolMetadata(
-                            name = f"{file_name}",
-                            description = prompt+summary,
+                            name = f"tool_{file_name.replace(' ','_')}",
+                            description = prompt.format(file_name=file_name)+summary,
                         )
                     )
         
-        return qe_tool,name
+        return qe_tool
     
-    def build_query_engine(self, html_folder, nodes_folder, summary_folder):
+    def build_query_engine(self, html_folder, nodes_folder, summary_folder, model_path):
 
-        for file in tqdm(os.listdir(html_folder)):
+        if model_path is None or not os.path.exists(model_path):
+            for file in tqdm(os.listdir(html_folder)):
+                
+                qe_tool = self.build_document_qe(pdf_folder=html_folder,
+                                    nodes_folder=nodes_folder,
+                                    summary_folder=summary_folder,
+                                    file=file)
+                
+                self.prod_qe.append(qe_tool)
             
-            qe_tool, name = self.build_document_qe(pdf_folder=html_folder,
-                                   nodes_folder=nodes_folder,
-                                   summary_folder=summary_folder,
-                                   file=file)
+            keyword_index = SimpleKeywordTableIndex(self.all_nodes)
+            self.keyword_query_engine = keyword_index.as_query_engine(service_context=service_context)
+            self.prod_qe.append(QueryEngineTool.from_defaults(query_engine=self.keyword_query_engine,
+                                                        description="Useful for retrieving specific context using keywords",))
             
-            if name not in self.agents_dict.keys():
-                self.agents_dict[name]=[]
-            self.agents_dict[name].append(qe_tool)
+            pickle.dump(self.prod_qe, open(model_path,'wb'))
+        else:
+            self.prod_qe = pickle.load(open(model_path,"rb"))
         
-        for name in self.agents_dict.keys():
-
-            agent = OpenAIAgent.from_tools(
-                self.agents_dict[name],
-                llm=llm,
-                verbose=True,
-                system_prompt = f"""\
-                                You are a specialized agent designed to answer queries about {name}.
-                                You must ALWAYS use at least one of the tools provided when answering a question; do NOT rely on prior knowledge.\
-                                """
-            )
-
-            self.prod_qe.append(QueryEngineTool(query_engine=agent,
-                                        metadata=ToolMetadata(
-                                        name=f"tool_{name}",
-                                        description=deskripsi.format(document=name),
-            )))
-        
-        keyword_index = SimpleKeywordTableIndex(self.all_nodes)
-        self.keyword_query_engine = keyword_index.as_query_engine(service_context=service_context)
-        self.prod_qe.append(QueryEngineTool.from_defaults(query_engine=self.keyword_query_engine,
-                                                     description="Useful for retrieving specific context using keywords",))
-
-        return self.prod_qe
+        tool_mapping = SimpleToolNodeMapping.from_objects(self.prod_qe)
+        obj_index = ObjectIndex.from_objects(self.prod_qe,
+                                                tool_mapping,
+                                                VectorStoreIndex)
+        system_prompt=""" \
+        You are an agent designed to answer queries about a set of given documents.
+        Please always use the tools provided to answer a question. Do not rely on prior knowledge.\
+        """
+        top_agent = FnRetrieverOpenAIAgent.from_retriever(obj_index.as_retriever(similarity_top_k=5),
+                                                        llm=llm,
+                                                        system_prompt=system_prompt,
+                                                        verbose=True)
+        return top_agent
 
     def build_query_engine_document(self, raw_nodes, node_mappings):
         """
@@ -144,21 +127,5 @@ class MultiDocumentQueryEngine():
         )
         query_engine = RetrieverQueryEngine.from_args(recursive_retriever)
         return query_engine
-
-    def multi_documents_query_engine(self):
-        tool_mapping = SimpleToolNodeMapping.from_objects(self.prod_qe)
-        obj_index = ObjectIndex.from_objects(self.prod_qe,
-                                             tool_mapping,
-                                             VectorStoreIndex)
-        
-        system_prompt=""" \
-        You are an agent designed to answer queries about a set of given documents.
-        Please always use the tools provided to answer a question. Do not rely on prior knowledge.\
-        """
-        top_agent = FnRetrieverOpenAIAgent.from_retriever(obj_index.as_retriever(similarity_top_k=5),
-                                                        llm=llm,
-                                                        system_prompt=system_prompt,
-                                                        verbose=True)
-        return top_agent
 
 

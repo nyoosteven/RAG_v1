@@ -15,12 +15,13 @@ from llama_index.core.schema import TextNode, NodeRelationship, RelatedNodeInfo
 from llama_index.llms.openai import OpenAI
 from llama_index.core.callbacks import CallbackManager, LlamaDebugHandler
 from llama_index.core.node_parser import SentenceSplitter
+from llama_index.readers.file import PptxReader
 
 from pathlib import Path
 nest_asyncio.apply()
 llama_debug = LlamaDebugHandler(print_trace_on_end=True)
 callback_manager = CallbackManager([llama_debug])
-os.environ["OPENAI_API_KEY"] = ""
+os.environ["OPENAI_API_KEY"] =""
 
 nltk.data.path.append('nltk_data')
 
@@ -38,7 +39,7 @@ def load_text(path):
         text = file.read()
     return text
 
-class PymuPDF():
+class build_vector_db():
 
     def __init__(self):
         self.text_parser = SentenceSplitter(

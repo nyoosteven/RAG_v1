@@ -1,0 +1,1 @@
+Efforts to enhance the efficiency and speed of a Retrieval-Augmented Generation (RAG) process are explored through the comparison of a Search Engine and a Chatbot, aiming to determine the most effective approach for rapid results in enterprise search engines.

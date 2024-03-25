@@ -17,8 +17,9 @@ def load_data():
     with st.spinner(text="Loading and indexing the Streamlit docs – hang tight! This should take 1-2 minutes."):
         multiDocumentRetriever = MultiDocumentRetriever()
         top_agent_retriever = multiDocumentRetriever.build_retriever(html_folder= 'data/pdf',
-                                       nodes_folder = 'data/nodes',
-                                       summary_folder = 'data/summary')
+                                                             nodes_folder = 'data/nodes',
+                                                             summary_folder = 'data/summary',
+                                                             model_path = 'model/cache_retriever')
         return top_agent_retriever
 
 top_agent = load_data()
